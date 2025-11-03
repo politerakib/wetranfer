@@ -1,0 +1,5 @@
+/vendor/
+/socket-server/node_modules/
+/.env
+/storage/uploads/*
+!/storage/uploads/.gitkeep
