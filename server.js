@@ -141,7 +141,7 @@ io.on('connection', (socket) => {
 
     socket.on('room-message', ({ roomId, message }) => {
         if (!roomId || !message) return;
-        socket.to(roomId).emit('room-message', message);
+        socket.to(roomId).emit('room-message', { message });
     });
 
     socket.on('disconnect', () => {

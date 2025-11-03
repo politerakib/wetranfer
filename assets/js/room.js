@@ -448,7 +448,12 @@ async function handleAnswer(data) {
     if (!shouldUseWebRTC()) return;
     const { from, answer } = data;
     const peer = peers.get(from);
-    if (!peer) return;
+    if (!peer || !peer.pc) return;
+    const state = peer.pc.signalingState;
+    if (state !== 'have-local-offer' && state !== 'have-local-pranswer') {
+        console.warn('Ignoring unexpected answer for peer', from, 'in state', state);
+        return;
+    }
     await peer.pc.setRemoteDescription(new RTCSessionDescription(answer));
 }
 
