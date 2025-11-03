@@ -117,6 +117,15 @@ function encodeChunkToBase64(chunk) {
     return btoa(binary);
 }
 
+async function readFileChunk(file, start, end) {
+    const slice = file.slice(start, end);
+    if (!slice || slice.size === 0) {
+        return new Uint8Array();
+    }
+    const buffer = await slice.arrayBuffer();
+    return new Uint8Array(buffer);
+}
+
 function clearPeerReconnect(peerId) {
     const timer = reconnectTimers.get(peerId);
     if (timer) {
@@ -736,9 +745,6 @@ async function sendFileViaWebRTC(file) {
 
     const card = createTransferCard(meta, 'out');
 
-    const arrayBuffer = await file.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-
     const livePeers = Array.from(peers.entries())
         .map(([peerId, peer]) => ({ peerId, channel: peer.dataChannel }))
         .filter(({ channel }) => channel && channel.readyState === 'open');
@@ -764,20 +770,42 @@ async function sendFileViaWebRTC(file) {
 
     await sendToPeers({ type: 'file-meta', ...meta });
     let transferInterrupted = livePeers.length === 0;
+    let firstChunkSent = false;
 
-    for (let offset = 0; offset < uint8Array.length && livePeers.length; offset += CHUNK_SIZE) {
-        const chunk = uint8Array.subarray(offset, offset + CHUNK_SIZE);
+    for (let offset = 0; offset < file.size && livePeers.length; offset += CHUNK_SIZE) {
+        let chunk;
+        try {
+            chunk = await readFileChunk(file, offset, offset + CHUNK_SIZE);
+        } catch (error) {
+            console.error('Failed to read file chunk', error);
+            if (error && error.name === 'NotReadableError') {
+                appendSystemMessage('The browser could not read the selected file. Please ensure it is still accessible and try again.');
+            } else {
+                appendSystemMessage('A file read error interrupted the realtime transfer.');
+            }
+            if (!firstChunkSent) {
+                throw error;
+            }
+            transferInterrupted = true;
+            break;
+        }
+
+        if (!chunk.length) {
+            break;
+        }
+
         const payload = {
             type: 'file-chunk',
             fileId: meta.fileId,
             data: encodeChunkToBase64(chunk)
         };
         await sendToPeers(payload);
+        firstChunkSent = true;
         if (!livePeers.length) {
             transferInterrupted = true;
             break;
         }
-        const progress = Math.round(((offset + chunk.length) / uint8Array.length) * 100);
+        const progress = Math.round(((offset + chunk.length) / file.size) * 100);
         updateProgress(card, progress);
     }
 
@@ -839,10 +867,20 @@ async function uploadFileToServer(file) {
 
 async function sendFile(file) {
     if (shouldUseWebRTC()) {
-        await sendFileViaWebRTC(file);
-    } else {
-        await uploadFileToServer(file);
+        try {
+            await sendFileViaWebRTC(file);
+            return;
+        } catch (error) {
+            const isPermissionError = error && error.name === 'NotReadableError';
+            const message = isPermissionError
+                ? 'Realtime transfer failed because the browser could not read the file. Attempting a server upload instead.'
+                : 'Realtime transfer failed unexpectedly. Attempting a server upload instead.';
+            appendSystemMessage(message);
+            console.warn('Falling back to server upload after realtime failure', error);
+        }
     }
+
+    await uploadFileToServer(file);
 }
 
 async function postTextMessage(message) {
