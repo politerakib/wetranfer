@@ -121,6 +121,10 @@ $history = fetch_room_history($mysqli, $roomId);
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
-    <script src="assets/js/room.js" defer></script>
+    <script src="assets/js/room-context.js" defer></script>
+    <script src="assets/js/room-ui.js" defer></script>
+    <script src="assets/js/room-webrtc.js" defer></script>
+    <script src="assets/js/room-socket.js" defer></script>
+    <script src="assets/js/room-main.js" defer></script>
 </body>
 </html>
