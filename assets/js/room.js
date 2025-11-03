@@ -12,6 +12,7 @@ const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
 const allowWebRTC = roomType === 'direct';
 const peers = new Map();
 const incomingFiles = new Map();
+const channelWaiters = new Map();
 let lastRoster = [];
 
 const chatFeed = document.getElementById('chatFeed');
@@ -32,7 +33,9 @@ const DATA_CHANNEL_MAX_BUFFER = 4 * 1024 * 1024; // 4MB high-water mark
 const DATA_CHANNEL_LOW_WATERMARK = 512 * 1024; // resume when queue drains below 512KB
 const BUFFER_CHECK_INTERVAL = 200;
 const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_BASE_DELAY = 750;
+const RECONNECT_BASE_DELAY = 250;
+const CHANNEL_RETRY_LIMIT = 3;
+const CHANNEL_WAIT_TIMEOUT = 5000;
 
 const reconnectAttempts = new Map();
 const reconnectTimers = new Map();
@@ -108,6 +111,76 @@ async function sendChannelMessage(channel, payload) {
     }
 }
 
+function getOpenChannel(peerId) {
+    const peer = peers.get(peerId);
+    if (!peer || !peer.dataChannel) return null;
+    return peer.dataChannel.readyState === 'open' ? peer.dataChannel : null;
+}
+
+function resolveChannelWaiters(peerId, channel) {
+    const waiters = channelWaiters.get(peerId);
+    if (!waiters) return;
+    channelWaiters.delete(peerId);
+    waiters.forEach(({ resolve, timer }) => {
+        clearTimeout(timer);
+        try {
+            resolve(channel);
+        } catch (error) {
+            console.error('Failed to resolve channel waiter', error);
+        }
+    });
+}
+
+function rejectChannelWaiters(peerId, error) {
+    const waiters = channelWaiters.get(peerId);
+    if (!waiters) return;
+    channelWaiters.delete(peerId);
+    waiters.forEach(({ reject, timer }) => {
+        clearTimeout(timer);
+        try {
+            reject(error);
+        } catch (err) {
+            console.error('Failed to reject channel waiter', err);
+        }
+    });
+}
+
+function waitForChannelOpen(peerId, timeout = CHANNEL_WAIT_TIMEOUT) {
+    const existing = getOpenChannel(peerId);
+    if (existing) {
+        return Promise.resolve(existing);
+    }
+
+    return new Promise((resolve, reject) => {
+        const waiters = channelWaiters.get(peerId) || [];
+        let entry = null;
+        const timer = setTimeout(() => {
+            const current = channelWaiters.get(peerId) || [];
+            const index = current.indexOf(entry);
+            if (index !== -1) {
+                current.splice(index, 1);
+                if (current.length) {
+                    channelWaiters.set(peerId, current);
+                } else {
+                    channelWaiters.delete(peerId);
+                }
+            }
+            reject(new Error('Timed out waiting for channel to open'));
+        }, timeout);
+
+        entry = {
+            resolve: (channel) => {
+                resolve(channel);
+            },
+            reject,
+            timer
+        };
+
+        waiters.push(entry);
+        channelWaiters.set(peerId, waiters);
+    });
+}
+
 function encodeChunkToBase64(chunk) {
     let binary = '';
     const length = chunk.length;
@@ -135,7 +208,7 @@ function clearPeerReconnect(peerId) {
     reconnectAttempts.delete(peerId);
 }
 
-function schedulePeerReconnect(peerId) {
+function schedulePeerReconnect(peerId, { immediate = false } = {}) {
     if (!shouldUseWebRTC()) return;
     if (reconnectTimers.has(peerId)) return;
     const rosterEntry = Array.isArray(lastRoster)
@@ -149,12 +222,14 @@ function schedulePeerReconnect(peerId) {
         return;
     }
 
-    const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, attempt), 5000);
+    const baseDelay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, attempt), 5000);
+    const delay = immediate ? 0 : baseDelay;
     reconnectAttempts.set(peerId, attempt + 1);
 
     const timer = setTimeout(() => {
         reconnectTimers.delete(peerId);
         closePeer(peerId);
+        rejectChannelWaiters(peerId, new Error('Reconnecting peer'));
         ensurePeerConnections(lastRoster);
     }, delay);
     reconnectTimers.set(peerId, timer);
@@ -331,37 +406,32 @@ function renderPreview(card, file, mimeType) {
     if (!preview) return;
 
     const type = mimeType || (file && file.type) || 'application/octet-stream';
+    if (!type.startsWith('image/')) {
+        preview.innerHTML = '';
+        preview.classList.add('d-none');
+        return;
+    }
+
     let element = null;
 
     if (file instanceof Blob) {
         const url = URL.createObjectURL(file);
-        if (type.startsWith('image/')) {
-            element = document.createElement('img');
-            element.src = url;
-            element.alt = file.name || 'preview';
-        } else if (type.startsWith('video/')) {
-            element = document.createElement('video');
-            element.src = url;
-            element.controls = true;
-        } else if (type === 'application/pdf') {
-            element = document.createElement('iframe');
-            element.src = url;
-        }
+        element = document.createElement('img');
+        element.src = url;
+        element.alt = file.name || 'preview';
     } else if (typeof file === 'string') {
-        if (type.startsWith('image/')) {
-            element = document.createElement('img');
-            element.src = file;
-            element.alt = 'preview';
-        } else if (type === 'application/pdf') {
-            element = document.createElement('iframe');
-            element.src = file;
-        }
+        element = document.createElement('img');
+        element.src = file;
+        element.alt = 'preview';
     }
 
     if (element) {
         preview.innerHTML = '';
         preview.appendChild(element);
         preview.classList.remove('d-none');
+    } else {
+        preview.innerHTML = '';
+        preview.classList.add('d-none');
     }
 }
 
@@ -471,7 +541,14 @@ function updateUserList(users) {
 }
 function closePeer(peerId, { clearReconnect = false } = {}) {
     const peer = peers.get(peerId);
-    if (!peer) return;
+    if (!peer) {
+        rejectChannelWaiters(peerId, new Error('Peer connection closed'));
+        if (clearReconnect) {
+            clearPeerReconnect(peerId);
+        }
+        return;
+    }
+    rejectChannelWaiters(peerId, new Error('Peer connection closed'));
     if (peer.dataChannel) {
         try {
             peer.dataChannel.close();
@@ -520,6 +597,7 @@ function setupDataChannel(peerId, channel) {
     channel.onopen = () => {
         console.log('Data channel open with', peerId);
         clearPeerReconnect(peerId);
+        resolveChannelWaiters(peerId, channel);
     };
 
     channel.onmessage = async (event) => {
@@ -534,11 +612,13 @@ function setupDataChannel(peerId, channel) {
     };
 
     channel.onclose = () => {
-        schedulePeerReconnect(peerId);
+        rejectChannelWaiters(peerId, new Error('Channel closed'));
+        schedulePeerReconnect(peerId, { immediate: true });
     };
 
     channel.onerror = () => {
-        schedulePeerReconnect(peerId);
+        rejectChannelWaiters(peerId, new Error('Channel error'));
+        schedulePeerReconnect(peerId, { immediate: true });
     };
 }
 
@@ -709,7 +789,7 @@ function finalizeFile(peerId, payload) {
     incomingFiles.delete(payload.fileId);
 }
 
-async function logFileMessage(meta, transferMode) {
+async function logFileMessage(meta, transferMode = 'webrtc') {
     const response = await fetch(messageEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -729,6 +809,65 @@ async function logFileMessage(meta, transferMode) {
     socket.emit('room-message', { roomId, message: data });
     return data;
 }
+function collectTargetPeerIds() {
+    const rosterPeers = Array.isArray(lastRoster)
+        ? lastRoster
+            .filter((user) => user.userId !== currentUser.id && user.status === 'online')
+            .map((user) => user.userId)
+        : [];
+    const peerEntries = Array.from(peers.keys());
+    const ids = new Set([...rosterPeers, ...peerEntries]);
+    ids.delete(currentUser.id);
+    return Array.from(ids);
+}
+
+async function deliverPayloadToPeer(peerId, payload) {
+    let attempt = 0;
+    while (attempt < CHANNEL_RETRY_LIMIT) {
+        attempt += 1;
+        let channel = getOpenChannel(peerId);
+        if (!channel) {
+            try {
+                channel = await waitForChannelOpen(peerId, CHANNEL_WAIT_TIMEOUT);
+            } catch (error) {
+                console.warn(`Waiting for channel to open for peer ${peerId} failed`, error);
+                schedulePeerReconnect(peerId, { immediate: true });
+                continue;
+            }
+        }
+
+        try {
+            await sendChannelMessage(channel, payload);
+            return true;
+        } catch (error) {
+            console.error(`Failed to send payload to peer ${peerId}`, error);
+            if (!channel || channel.readyState !== 'open') {
+                schedulePeerReconnect(peerId, { immediate: true });
+            }
+        }
+    }
+
+    return false;
+}
+
+async function broadcastPayloadToPeers(payload) {
+    const targets = collectTargetPeerIds();
+    if (!targets.length) {
+        return { delivered: 0, targets: 0 };
+    }
+
+    let delivered = 0;
+    for (const peerId of targets) {
+        // eslint-disable-next-line no-await-in-loop
+        const success = await deliverPayloadToPeer(peerId, payload);
+        if (success) {
+            delivered += 1;
+        }
+    }
+
+    return { delivered, targets: targets.length };
+}
+
 async function sendFileViaWebRTC(file) {
     if (!shouldUseWebRTC()) {
         return;
@@ -745,36 +884,22 @@ async function sendFileViaWebRTC(file) {
 
     const card = createTransferCard(meta, 'out');
 
-    const livePeers = Array.from(peers.entries())
-        .map(([peerId, peer]) => ({ peerId, channel: peer.dataChannel }))
-        .filter(({ channel }) => channel && channel.readyState === 'open');
+    const { delivered: metaDelivered, targets: initialTargets } = await broadcastPayloadToPeers({
+        type: 'file-meta',
+        ...meta
+    });
 
-    const startedWithPeers = livePeers.length > 0;
-
-    if (livePeers.length === 0) {
+    const startedWithPeers = initialTargets > 0;
+    if (!startedWithPeers) {
         appendSystemMessage('No connected peers available for realtime transfer right now. The file will be logged for history.');
     }
-
-    const sendToPeers = async (payload) => {
-        for (let index = livePeers.length - 1; index >= 0; index -= 1) {
-            const target = livePeers[index];
-            try {
-                await sendChannelMessage(target.channel, payload);
-            } catch (error) {
-                console.error(`Failed to send data to peer ${target.peerId}`, error);
-                schedulePeerReconnect(target.peerId);
-                livePeers.splice(index, 1);
-            }
-        }
-    };
-
-    await sendToPeers({ type: 'file-meta', ...meta });
-    let transferInterrupted = livePeers.length === 0;
+    let transferInterrupted = startedWithPeers && metaDelivered === 0;
     let firstChunkSent = false;
 
-    for (let offset = 0; offset < file.size && livePeers.length; offset += CHUNK_SIZE) {
+    for (let offset = 0; offset < file.size && !transferInterrupted; offset += CHUNK_SIZE) {
         let chunk;
         try {
+            // eslint-disable-next-line no-await-in-loop
             chunk = await readFileChunk(file, offset, offset + CHUNK_SIZE);
         } catch (error) {
             console.error('Failed to read file chunk', error);
@@ -799,23 +924,27 @@ async function sendFileViaWebRTC(file) {
             fileId: meta.fileId,
             data: encodeChunkToBase64(chunk)
         };
-        await sendToPeers(payload);
-        firstChunkSent = true;
-        if (!livePeers.length) {
+
+        // eslint-disable-next-line no-await-in-loop
+        const { delivered, targets } = await broadcastPayloadToPeers(payload);
+        firstChunkSent = firstChunkSent || delivered > 0;
+
+        if (targets === 0 || (targets > 0 && delivered === 0)) {
             transferInterrupted = true;
             break;
         }
+
         const progress = Math.round(((offset + chunk.length) / file.size) * 100);
         updateProgress(card, progress);
     }
 
-    if (!transferInterrupted && livePeers.length) {
-        await sendToPeers({
+    if (!transferInterrupted) {
+        const { delivered: completionDelivered, targets: completionTargets } = await broadcastPayloadToPeers({
             type: 'file-complete',
             fileId: meta.fileId,
             senderId: currentUser.id
         });
-        if (!livePeers.length) {
+        if (completionTargets === 0 || (completionTargets > 0 && completionDelivered === 0)) {
             transferInterrupted = true;
         }
     }
