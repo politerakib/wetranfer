@@ -10,8 +10,13 @@ if (!$roomId) {
     exit;
 }
 
-$roomType = isset($_GET['type']) ? sanitize_input($_GET['type']) : 'direct';
-ensure_room($mysqli, $roomId, $roomType);
+$requestedType = isset($_GET['type']) ? sanitize_input($_GET['type']) : 'direct';
+$defaultMode = $requestedType === 'team' ? 'store' : 'webrtc';
+ensure_room($mysqli, $roomId, $requestedType, $defaultMode);
+$roomDetails = get_room_details($mysqli, $roomId);
+
+$roomType = $roomDetails['room_type'] ?? 'direct';
+$transferMode = $roomDetails['transfer_mode'] ?? $defaultMode;
 $history = fetch_room_history($mysqli, $roomId);
 ?>
 <!DOCTYPE html>
@@ -58,6 +63,24 @@ $history = fetch_room_history($mysqli, $roomId);
             <section class="col-12 col-lg-9">
                 <div class="card shadow-sm h-100">
                     <div class="card-body d-flex flex-column gap-3">
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                            <span class="badge bg-info-subtle text-info" id="modeStatus">
+                                <i class="fa-solid fa-arrows-rotate me-1"></i>
+                                Transfer mode: <?php echo $transferMode === 'store' ? 'Server storage' : 'Realtime WebRTC'; ?>
+                            </span>
+                            <?php if ($roomType === 'direct') : ?>
+                                <div class="form-check form-switch m-0">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="modeToggle" <?php echo $transferMode === 'store' ? 'checked' : ''; ?>>
+                                    <label class="form-check-label small" for="modeToggle">
+                                        Store files on server
+                                    </label>
+                                </div>
+                            <?php else : ?>
+                                <span class="text-secondary small">
+                                    <i class="fa-solid fa-circle-info me-1"></i>Team rooms use server storage for sharing.
+                                </span>
+                            <?php endif; ?>
+                        </div>
                         <div class="drag-drop-zone" id="dropZone">
                             <i class="fa-solid fa-cloud-arrow-up fa-2x text-primary mb-2"></i>
                             <p class="mb-0">Drag & drop files here or <span class="text-primary">click to browse</span></p>
@@ -90,7 +113,10 @@ $history = fetch_room_history($mysqli, $roomId);
             apiBase: '<?php echo sanitize_input(getenv('NODE_API_BASE') ?: 'http://localhost:3000'); ?>',
             roomId: '<?php echo htmlspecialchars($roomId); ?>',
             user: <?php echo json_encode($user); ?>,
-            history: <?php echo json_encode($history); ?>
+            history: <?php echo json_encode($history); ?>,
+            roomType: '<?php echo htmlspecialchars($roomType); ?>',
+            transferMode: '<?php echo htmlspecialchars($transferMode); ?>',
+            messageEndpoint: 'room_message.php'
         };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

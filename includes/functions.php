@@ -28,20 +28,20 @@ function ensure_user(mysqli $mysqli)
     ];
 }
 
-function ensure_room(mysqli $mysqli, $roomId, $roomType = 'direct')
+function ensure_room(mysqli $mysqli, $roomId, $roomType = 'direct', $transferMode = 'webrtc')
 {
-    $stmt = mysqli_prepare($mysqli, 'SELECT id FROM rooms WHERE room_id = ? LIMIT 1');
+    $stmt = mysqli_prepare($mysqli, 'SELECT room_type, transfer_mode FROM rooms WHERE room_id = ? LIMIT 1');
     if ($stmt) {
         mysqli_stmt_bind_param($stmt, 's', $roomId);
         mysqli_stmt_execute($stmt);
-        mysqli_stmt_store_result($stmt);
-        $exists = mysqli_stmt_num_rows($stmt) > 0;
+        $result = mysqli_stmt_get_result($stmt);
+        $existing = mysqli_fetch_assoc($result);
         mysqli_stmt_close($stmt);
 
-        if (!$exists) {
-            $stmtInsert = mysqli_prepare($mysqli, 'INSERT INTO rooms (room_id, room_type, created_at) VALUES (?, ?, NOW())');
+        if (!$existing) {
+            $stmtInsert = mysqli_prepare($mysqli, 'INSERT INTO rooms (room_id, room_type, transfer_mode, created_at) VALUES (?, ?, ?, NOW())');
             if ($stmtInsert) {
-                mysqli_stmt_bind_param($stmtInsert, 'ss', $roomId, $roomType);
+                mysqli_stmt_bind_param($stmtInsert, 'sss', $roomId, $roomType, $transferMode);
                 mysqli_stmt_execute($stmtInsert);
                 mysqli_stmt_close($stmtInsert);
             }
@@ -49,22 +49,86 @@ function ensure_room(mysqli $mysqli, $roomId, $roomType = 'direct')
     }
 }
 
-function log_file_transfer(mysqli $mysqli, $roomId, $userId, $fileName, $fileType)
+function get_room_details(mysqli $mysqli, $roomId)
 {
-    $query = 'INSERT INTO file_logs (room_id, user_id, file_name, file_type, created_at) VALUES (?, ?, ?, ?, NOW())';
-    $stmt = mysqli_prepare($mysqli, $query);
-
+    $stmt = mysqli_prepare($mysqli, 'SELECT room_id, room_type, transfer_mode FROM rooms WHERE room_id = ? LIMIT 1');
     if ($stmt) {
-        mysqli_stmt_bind_param($stmt, 'siss', $roomId, $userId, $fileName, $fileType);
+        mysqli_stmt_bind_param($stmt, 's', $roomId);
+        mysqli_stmt_execute($stmt);
+        $result = mysqli_stmt_get_result($stmt);
+        $room = mysqli_fetch_assoc($result);
+        mysqli_stmt_close($stmt);
+        return $room ?: null;
+    }
+
+    return null;
+}
+
+function update_room_transfer_mode(mysqli $mysqli, $roomId, $transferMode)
+{
+    $stmt = mysqli_prepare($mysqli, 'UPDATE rooms SET transfer_mode = ? WHERE room_id = ?');
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, 'ss', $transferMode, $roomId);
         mysqli_stmt_execute($stmt);
         mysqli_stmt_close($stmt);
     }
 }
 
+function log_room_message(mysqli $mysqli, array $payload)
+{
+    $query = 'INSERT INTO room_messages (room_id, user_id, message_type, message_text, file_name, file_path, file_type, transfer_mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())';
+    $stmt = mysqli_prepare($mysqli, $query);
+
+    if ($stmt) {
+        $roomId = $payload['room_id'];
+        $userId = $payload['user_id'];
+        $messageType = $payload['message_type'];
+        $messageText = $payload['message_text'] ?? null;
+        $fileName = $payload['file_name'] ?? null;
+        $filePath = $payload['file_path'] ?? null;
+        $fileType = $payload['file_type'] ?? null;
+        $transferMode = $payload['transfer_mode'] ?? 'webrtc';
+
+        mysqli_stmt_bind_param(
+            $stmt,
+            'sissssss',
+            $roomId,
+            $userId,
+            $messageType,
+            $messageText,
+            $fileName,
+            $filePath,
+            $fileType,
+            $transferMode
+        );
+        mysqli_stmt_execute($stmt);
+        $insertId = mysqli_insert_id($mysqli);
+        mysqli_stmt_close($stmt);
+
+        $payload['id'] = $insertId;
+
+        $stmtSelect = mysqli_prepare($mysqli, 'SELECT created_at FROM room_messages WHERE id = ? LIMIT 1');
+        if ($stmtSelect) {
+            mysqli_stmt_bind_param($stmtSelect, 'i', $insertId);
+            mysqli_stmt_execute($stmtSelect);
+            $result = mysqli_stmt_get_result($stmtSelect);
+            $row = mysqli_fetch_assoc($result);
+            if ($row) {
+                $payload['created_at'] = $row['created_at'];
+            }
+            mysqli_stmt_close($stmtSelect);
+        }
+
+        return $payload;
+    }
+
+    return $payload;
+}
+
 function fetch_room_history(mysqli $mysqli, $roomId)
 {
     $history = [];
-    $query = 'SELECT fl.file_name, fl.file_type, fl.created_at, u.display_name FROM file_logs fl JOIN users u ON u.id = fl.user_id WHERE fl.room_id = ? ORDER BY fl.created_at ASC';
+    $query = 'SELECT rm.id, rm.message_type, rm.message_text, rm.file_name, rm.file_path, rm.file_type, rm.transfer_mode, rm.created_at, u.display_name, u.id as sender_id FROM room_messages rm JOIN users u ON u.id = rm.user_id WHERE rm.room_id = ? ORDER BY rm.created_at ASC';
     $stmt = mysqli_prepare($mysqli, $query);
 
     if ($stmt) {

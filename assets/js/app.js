@@ -7,11 +7,11 @@ const roomInputWrapper = document.getElementById('roomInputWrapper');
 const joinForm = document.getElementById('joinForm');
 const themeToggle = document.getElementById('themeToggle');
 
-async function createRoom(roomType = 'direct') {
+async function createRoom(roomType = 'direct', transferMode = 'webrtc') {
     const response = await fetch(`${API_BASE}/api/rooms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomType })
+        body: JSON.stringify({ roomType, transferMode })
     });
 
     if (!response.ok) {
@@ -21,15 +21,19 @@ async function createRoom(roomType = 'direct') {
     return response.json();
 }
 
-function redirectToRoom(roomId) {
-    window.location.href = `room.php?room=${encodeURIComponent(roomId)}`;
+function redirectToRoom(roomId, roomType) {
+    const params = new URLSearchParams({ room: roomId });
+    if (roomType) {
+        params.set('type', roomType);
+    }
+    window.location.href = `room.php?${params.toString()}`;
 }
 
 sendBtn?.addEventListener('click', async () => {
     try {
         sendBtn.setAttribute('disabled', 'disabled');
-        const data = await createRoom('direct');
-        redirectToRoom(data.roomId);
+        const data = await createRoom('direct', 'webrtc');
+        redirectToRoom(data.roomId, data.roomType);
     } catch (error) {
         console.error(error);
         alert('Failed to create room. Please try again.');
@@ -41,8 +45,8 @@ sendBtn?.addEventListener('click', async () => {
 teamBtn?.addEventListener('click', async () => {
     try {
         teamBtn.setAttribute('disabled', 'disabled');
-        const data = await createRoom('team');
-        redirectToRoom(data.roomId);
+        const data = await createRoom('team', 'store');
+        redirectToRoom(data.roomId, data.roomType);
     } catch (error) {
         console.error(error);
         alert('Failed to create team room.');

@@ -28,18 +28,23 @@ function getRoom(roomId) {
     if (!rooms.has(roomId)) {
         rooms.set(roomId, {
             users: new Map(),
-            type: 'direct'
+            roster: new Map(),
+            type: 'direct',
+            transferMode: 'webrtc'
         });
     }
     return rooms.get(roomId);
 }
 
 function serializeUsers(room) {
-    return Array.from(room.users.values()).map((user) => ({
-        userId: user.userId,
-        displayName: user.displayName,
-        status: 'online'
-    }));
+    const roster = Array.from(room.roster.values());
+    roster.sort((a, b) => {
+        if (a.status === b.status) {
+            return a.displayName.localeCompare(b.displayName);
+        }
+        return a.status === 'online' ? -1 : 1;
+    });
+    return roster;
 }
 
 function findSocketId(room, userId) {
@@ -48,11 +53,26 @@ function findSocketId(room, userId) {
 }
 
 app.post('/api/rooms', (req, res) => {
-    const { roomType = 'direct' } = req.body || {};
+    const { roomType = 'direct', transferMode } = req.body || {};
     const roomId = generateRoomId(roomType);
     const room = getRoom(roomId);
     room.type = roomType;
-    res.json({ roomId, roomType });
+    room.transferMode = roomType === 'team' ? 'store' : (transferMode === 'store' ? 'store' : 'webrtc');
+    res.json({ roomId, roomType, transferMode: room.transferMode });
+});
+
+app.post('/api/rooms/:roomId/mode', (req, res) => {
+    const { roomId } = req.params;
+    const { transferMode } = req.body || {};
+    if (!roomId || !transferMode) {
+        return res.status(422).json({ error: 'Missing parameters' });
+    }
+
+    const normalized = transferMode === 'store' ? 'store' : 'webrtc';
+    const room = getRoom(roomId);
+    room.transferMode = normalized;
+    io.to(roomId).emit('room-info', { roomType: room.type, transferMode: room.transferMode });
+    res.json({ roomId, roomType: room.type, transferMode: room.transferMode });
 });
 
 io.on('connection', (socket) => {
@@ -62,6 +82,14 @@ io.on('connection', (socket) => {
         }
 
         const room = getRoom(roomId);
+        const onlineUserIds = new Set(Array.from(room.users.values()).map((user) => user.userId));
+        const alreadyOnline = onlineUserIds.has(userId);
+
+        if (!alreadyOnline && room.type === 'direct' && onlineUserIds.size >= 2) {
+            socket.emit('room-full');
+            return;
+        }
+
         socket.join(roomId);
         socket.data.roomId = roomId;
         socket.data.userId = userId;
@@ -73,6 +101,13 @@ io.on('connection', (socket) => {
             displayName
         });
 
+        room.roster.set(userId, {
+            userId,
+            displayName,
+            status: 'online'
+        });
+
+        socket.emit('room-info', { roomType: room.type, transferMode: room.transferMode });
         io.to(roomId).emit('room-users', serializeUsers(room));
         socket.to(roomId).emit('user-joined', { userId, displayName });
     });
@@ -104,11 +139,21 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('room-message', ({ roomId, message }) => {
+        if (!roomId || !message) return;
+        socket.to(roomId).emit('room-message', message);
+    });
+
     socket.on('disconnect', () => {
         const { roomId, userId, displayName } = socket.data || {};
         if (!roomId) return;
         const room = getRoom(roomId);
         room.users.delete(socket.id);
+        const rosterEntry = room.roster.get(userId);
+        if (rosterEntry) {
+            rosterEntry.status = 'offline';
+            room.roster.set(userId, rosterEntry);
+        }
         socket.to(roomId).emit('user-left', { userId, displayName });
         io.to(roomId).emit('room-users', serializeUsers(room));
 
