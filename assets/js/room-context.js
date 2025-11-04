@@ -13,23 +13,53 @@
         allowWebRTC: (config.roomType || 'direct') === 'direct',
         lastRoster: [],
         peerId: null,
-        peerConfig: {
-            host: 'localhost',
-            port: 3000,
-            path: config.peerPath || '/peerjs',
-            secure: false
-        }
+        peerConfig: null
     };
 
-    try {
-        const apiUrl = new URL(state.apiBase);
-        state.peerConfig.host = apiUrl.hostname;
-        state.peerConfig.secure = apiUrl.protocol === 'https:';
-        state.peerConfig.port = apiUrl.port
-            ? parseInt(apiUrl.port, 10)
-            : (state.peerConfig.secure ? 443 : 80);
-    } catch (error) {
-        console.warn('Unable to derive PeerJS configuration from apiBase', error);
+    if (config.peerConfig && typeof config.peerConfig === 'object'
+        && Object.keys(config.peerConfig).length > 0) {
+        const rawConfig = config.peerConfig;
+        const normalized = {};
+
+        if (rawConfig.host) {
+            normalized.host = String(rawConfig.host);
+        }
+
+        if (rawConfig.port) {
+            const portNumber = parseInt(rawConfig.port, 10);
+            if (!Number.isNaN(portNumber)) {
+                normalized.port = portNumber;
+            }
+        }
+
+        if (rawConfig.path) {
+            normalized.path = String(rawConfig.path);
+        }
+
+        if (typeof rawConfig.secure !== 'undefined') {
+            if (typeof rawConfig.secure === 'string') {
+                const secureValue = rawConfig.secure.toLowerCase();
+                normalized.secure = ['1', 'true', 'on', 'yes'].includes(secureValue);
+            } else {
+                normalized.secure = !!rawConfig.secure;
+            }
+        }
+
+        if (normalized.host && typeof normalized.secure === 'undefined') {
+            normalized.secure = normalized.port === 443;
+        }
+
+        if (normalized.host && !normalized.port) {
+            normalized.port = normalized.secure ? 443 : 80;
+        }
+
+        if (normalized.host && !normalized.path) {
+            normalized.path = '/';
+        }
+
+        if (Object.keys(normalized).length > 0) {
+            state.peerConfig = normalized;
+        }
     }
 
     const dom = {

@@ -18,6 +18,19 @@ $roomDetails = get_room_details($mysqli, $roomId);
 $roomType = $roomDetails['room_type'] ?? 'direct';
 $transferMode = $roomDetails['transfer_mode'] ?? $defaultMode;
 $history = fetch_room_history($mysqli, $roomId);
+
+$peerConfigRaw = [
+    'host' => getenv('PEER_HOST') !== false ? getenv('PEER_HOST') : null,
+    'port' => getenv('PEER_PORT') !== false ? getenv('PEER_PORT') : null,
+    'path' => getenv('PEER_PATH') !== false ? getenv('PEER_PATH') : null,
+    'secure' => getenv('PEER_SECURE') !== false ? getenv('PEER_SECURE') : null
+];
+$peerConfig = array_filter($peerConfigRaw, function ($value) {
+    return $value !== null && $value !== '';
+});
+if (empty($peerConfig)) {
+    $peerConfig = null;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="light">
@@ -117,12 +130,12 @@ $history = fetch_room_history($mysqli, $roomId);
             roomType: '<?php echo htmlspecialchars($roomType); ?>',
             transferMode: '<?php echo htmlspecialchars($transferMode); ?>',
             messageEndpoint: 'room_message.php',
-            peerPath: '/peerjs'
+            peerConfig: <?php echo json_encode($peerConfig); ?>
         };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
     <script src="assets/js/room-context.js" defer></script>
     <script src="assets/js/room-ui.js" defer></script>
     <script src="assets/js/room-webrtc.js" defer></script>

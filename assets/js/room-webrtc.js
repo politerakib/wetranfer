@@ -179,14 +179,20 @@
 
         peerInitializing = true;
 
-        const peerConfig = {
-            host: state.peerConfig.host,
-            port: state.peerConfig.port,
-            path: state.peerConfig.path,
-            secure: state.peerConfig.secure
-        };
+        let peerOptions = null;
 
-        peerInstance = new Peer(getLocalPeerId(), peerConfig);
+        if (state.peerConfig) {
+            peerOptions = { ...state.peerConfig };
+            Object.keys(peerOptions).forEach((key) => {
+                if (typeof peerOptions[key] === 'undefined') {
+                    delete peerOptions[key];
+                }
+            });
+        }
+
+        peerInstance = peerOptions
+            ? new Peer(getLocalPeerId(), peerOptions)
+            : new Peer(getLocalPeerId());
 
         peerInstance.on('open', (id) => {
             state.peerId = id;

@@ -3,7 +3,6 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const crypto = require('crypto');
-const { ExpressPeerServer } = require('peer');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,13 +13,8 @@ const io = new Server(server, {
     }
 });
 
-const peerServer = ExpressPeerServer(server, {
-    path: '/peerjs'
-});
-
 app.use(cors());
 app.use(express.json());
-app.use('/peerjs', peerServer);
 
 const rooms = new Map();
 
