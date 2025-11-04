@@ -42,10 +42,13 @@
                 return;
             } catch (error) {
                 const isPermissionError = error && error.name === 'NotReadableError';
-                const message = isPermissionError
-                    ? 'Realtime transfer failed because the browser could not read the file. Attempting a server upload instead.'
-                    : 'Realtime transfer failed unexpectedly. Attempting a server upload instead.';
-                ui.appendSystemMessage(message);
+                const isInterruption = error && /realtime transfer interrupted/i.test(error.message || '');
+                if (!isInterruption) {
+                    const message = isPermissionError
+                        ? 'Realtime transfer failed because the browser could not read the file. Attempting a server upload instead.'
+                        : 'Realtime transfer failed unexpectedly. Attempting a server upload instead.';
+                    ui.appendSystemMessage(message);
+                }
                 console.warn('Falling back to server upload after realtime failure', error);
             }
         }

@@ -640,12 +640,12 @@
         }
 
         if (transferInterrupted && startedWithPeers) {
-            ui.appendSystemMessage('Realtime transfer interrupted. Waiting for peers to reconnect.');
-        } else {
-            ui.updateProgress(card, 100);
-            ui.showToast();
+            ui.appendSystemMessage('Realtime transfer interrupted. Switching to server upload.');
+            throw new Error('Realtime transfer interrupted');
         }
 
+        ui.updateProgress(card, 100);
+        ui.showToast();
         ui.renderPreview(card, file, meta.mime);
 
         try {
