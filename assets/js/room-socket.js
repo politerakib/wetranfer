@@ -53,9 +53,10 @@
             } else {
                 ui.appendSystemMessage(`${payload.displayName} joined the room`);
                 if (webRTC.shouldUseWebRTC()
-                    && payload.userId !== state.currentUser.id
-                    && state.currentUser.id > payload.userId) {
-                    webRTC.createOffer(payload.userId);
+                    && payload.userId !== state.currentUser.id) {
+                    webRTC.connectToPeer(payload.userId).catch((error) => {
+                        console.warn('Failed to initiate peer connection after join', error);
+                    });
                 }
             }
         });
@@ -68,10 +69,6 @@
                 webRTC.closePeer(payload.userId, { clearReconnect: true });
             }
         });
-
-        socket.on('offer', (data) => webRTC.handleOffer(data));
-        socket.on('answer', (data) => webRTC.handleAnswer(data));
-        socket.on('ice-candidate', (data) => webRTC.handleIceCandidate(data));
 
         socket.on('room-info', (payload) => {
             if (typeof onRoomInfo === 'function') {

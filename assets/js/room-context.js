@@ -11,8 +11,26 @@
         currentTransferMode: config.transferMode
             || ((config.roomType || 'direct') === 'team' ? 'store' : 'webrtc'),
         allowWebRTC: (config.roomType || 'direct') === 'direct',
-        lastRoster: []
+        lastRoster: [],
+        peerId: null,
+        peerConfig: {
+            host: 'localhost',
+            port: 3000,
+            path: config.peerPath || '/peerjs',
+            secure: false
+        }
     };
+
+    try {
+        const apiUrl = new URL(state.apiBase);
+        state.peerConfig.host = apiUrl.hostname;
+        state.peerConfig.secure = apiUrl.protocol === 'https:';
+        state.peerConfig.port = apiUrl.port
+            ? parseInt(apiUrl.port, 10)
+            : (state.peerConfig.secure ? 443 : 80);
+    } catch (error) {
+        console.warn('Unable to derive PeerJS configuration from apiBase', error);
+    }
 
     const dom = {
         chatFeed: document.getElementById('chatFeed'),
@@ -45,7 +63,8 @@
         MAX_RECONNECT_ATTEMPTS: 5,
         RECONNECT_BASE_DELAY: 250,
         CHANNEL_RETRY_LIMIT: 3,
-        CHANNEL_WAIT_TIMEOUT: 5000
+        CHANNEL_WAIT_TIMEOUT: 5000,
+        PEER_RECONNECT_DELAY: 750
     };
 
     const toastInstance = dom.successToast

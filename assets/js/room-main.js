@@ -223,8 +223,10 @@
             ui.appendSystemMessage(`${payload.displayName} joined the room`);
             if (webRTC.shouldUseWebRTC()
                 && payload.userId !== state.currentUser.id
-                && state.currentUser.id > payload.userId) {
-                webRTC.createOffer(payload.userId);
+                ) {
+                webRTC.connectToPeer(payload.userId).catch((error) => {
+                    console.warn('Failed to start peer connection when user joined', error);
+                });
             }
         },
         onUserLeft: (payload) => {

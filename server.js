@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const crypto = require('crypto');
+const { ExpressPeerServer } = require('peer');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,8 +14,13 @@ const io = new Server(server, {
     }
 });
 
+const peerServer = ExpressPeerServer(server, {
+    path: '/peerjs'
+});
+
 app.use(cors());
 app.use(express.json());
+app.use('/peerjs', peerServer);
 
 const rooms = new Map();
 
@@ -45,11 +51,6 @@ function serializeUsers(room) {
         return a.status === 'online' ? -1 : 1;
     });
     return roster;
-}
-
-function findSocketId(room, userId) {
-    const entry = Array.from(room.users.values()).find((user) => user.userId === userId);
-    return entry ? entry.socketId : null;
 }
 
 app.post('/api/rooms', (req, res) => {
@@ -110,33 +111,6 @@ io.on('connection', (socket) => {
         socket.emit('room-info', { roomType: room.type, transferMode: room.transferMode });
         io.to(roomId).emit('room-users', serializeUsers(room));
         socket.to(roomId).emit('user-joined', { userId, displayName });
-    });
-
-    socket.on('offer', ({ roomId, target, offer }) => {
-        if (!roomId || !target || !offer) return;
-        const room = getRoom(roomId);
-        const targetSocketId = findSocketId(room, target);
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('offer', { from: socket.data.userId, offer });
-        }
-    });
-
-    socket.on('answer', ({ roomId, target, answer }) => {
-        if (!roomId || !target || !answer) return;
-        const room = getRoom(roomId);
-        const targetSocketId = findSocketId(room, target);
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('answer', { from: socket.data.userId, answer });
-        }
-    });
-
-    socket.on('ice-candidate', ({ roomId, target, candidate }) => {
-        if (!roomId || !target || !candidate) return;
-        const room = getRoom(roomId);
-        const targetSocketId = findSocketId(room, target);
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('ice-candidate', { from: socket.data.userId, candidate });
-        }
     });
 
     socket.on('room-message', ({ roomId, message }) => {
