@@ -2,9 +2,11 @@
 require_once __DIR__ . '/components/layout.php';
 
 $messages = [
-    ['user' => 'Jordan', 'time' => '09:24', 'text' => 'Welcome to the premium chat room!'],
-    ['user' => 'Sage', 'time' => '09:26', 'text' => 'Latency is almost zero here.'],
-    ['user' => 'Ren', 'time' => '09:27', 'text' => 'Loving the dark/light switch.'],
+    ['type' => 'info', 'time' => '09:23', 'text' => 'Ren joined the room securely'],
+    ['type' => 'incoming', 'user' => 'Jordan', 'time' => '09:24', 'text' => 'Welcome to the premium chat room!'],
+    ['type' => 'outgoing', 'user' => 'Sage', 'time' => '09:26', 'text' => 'Latency is almost zero here and files stay encrypted.'],
+    ['type' => 'incoming', 'user' => 'Ren', 'time' => '09:27', 'text' => 'Loving the dark/light switch — looks sharp on mobile too.'],
+    ['type' => 'outgoing', 'user' => 'Sage', 'time' => '09:28', 'text' => 'Dropping the sprint brief now.'],
 ];
 
 $users = [
@@ -36,13 +38,25 @@ ob_start();
             </div>
             <div class="h-[420px] space-y-4 overflow-y-auto px-6 py-5 bg-slate-50 dark:bg-slate-900/60">
                 <?php foreach ($messages as $message): ?>
-                    <div class="max-w-xl rounded-2xl bg-white px-4 py-3 shadow-sm dark:bg-slate-800">
-                        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-300">
-                            <span class="font-semibold text-slate-900 dark:text-white"><?php echo $message['user']; ?></span>
-                            <span><?php echo $message['time']; ?></span>
+                    <?php if ($message['type'] === 'info'): ?>
+                        <div class="flex justify-center">
+                            <div class="flex items-center gap-2 rounded-full bg-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700">
+                                <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                                <?php echo $message['text']; ?> · <?php echo $message['time']; ?>
+                            </div>
                         </div>
-                        <p class="mt-2 text-sm text-slate-700 dark:text-slate-200"><?php echo $message['text']; ?></p>
-                    </div>
+                    <?php else: ?>
+                        <?php $isSelf = $message['type'] === 'outgoing'; ?>
+                        <div class="flex <?php echo $isSelf ? 'justify-end' : 'justify-start'; ?>">
+                            <div class="max-w-xl rounded-2xl px-4 py-3 shadow-sm <?php echo $isSelf ? 'bg-gradient-to-r from-brand-500 to-brand-600 text-white' : 'bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-50'; ?>">
+                                <div class="flex items-center justify-between text-xs <?php echo $isSelf ? 'text-white/80' : 'text-slate-500 dark:text-slate-300'; ?>">
+                                    <span class="font-semibold"><?php echo $message['user']; ?></span>
+                                    <span><?php echo $message['time']; ?></span>
+                                </div>
+                                <p class="mt-2 text-sm <?php echo $isSelf ? 'text-white' : 'text-slate-700 dark:text-slate-200'; ?>"><?php echo $message['text']; ?></p>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                 <?php endforeach; ?>
             </div>
             <div class="flex items-center gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-700">
